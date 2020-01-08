@@ -5,6 +5,7 @@
 
 #include "common.h"
 #include "bitflyer.h"
+#include "bitfinex.h"
 
 using namespace rapidjson;
 
@@ -18,7 +19,7 @@ inline unsigned long long timestamp_nanosec(char *str) {
     strptime(str, "%Y-%m-%d %H:%M:%S", &time);
 
     nanosec = ((unsigned long long) timegm(&time)) * 1000000000;
-    nanosec += atol(str+strlen("2020-01-01 19:12:03.")) * 100;
+    nanosec += atol(str+strlen("2020-01-01 19:12:03.")) * 1000;
 
     return nanosec;
 }
@@ -44,11 +45,24 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    // open database
-    int r;
-    char *err;
-    sqlite3 *db = connect_database(argv[1]);
+    // setup commit interval
+    unsigned int commit_interval;
+    if (strcmp(argv[2], "bitfinex") == 0) {
+        commit_interval = 1000000;
 
+    } else if (strcmp(argv[2], "bitmex") == 0) {
+        commit_interval = 100000;
+
+    } else if (strcmp(argv[2], "bitflyer") == 0) {
+        commit_interval = 100000;
+
+    } else {
+        std::cerr << "unknown exchange name" << std::endl;
+        exit(1);
+    }
+
+    // open database
+    sqlite3 *db = connect_database(argv[1]);
     
     /* start reading */
     // buffer for storing an line
@@ -63,14 +77,8 @@ int main(int argc, char *argv[]) {
     // skip head
     std::cin.getline(buf, N_L);
 
-    // setup new transaction
-    r = sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, &err);
-
-    if (r != SQLITE_OK) {
-        std::cerr << "starting new transaction failed: " << err << std::endl;
-        sqlite3_free(err);
-        exit(1);
-    }
+    // setup transaction
+    start_transaction(db);
 
     while (std::cin.getline(buf, N_L, ',')) {
         if (buf[0] == 'm' && buf[1] == 's' && buf[2] == 'g') {
@@ -85,14 +93,12 @@ int main(int argc, char *argv[]) {
             doc.Parse<kParseFullPrecisionFlag>(buf);
 
             if (strcmp(argv[2], "bitfinex") == 0) {
+                bitfinex_msg(db, line_timestamp, doc);
 
             } else if (strcmp(argv[2], "bitmex") == 0) {
-
+                
             } else if (strcmp(argv[2], "bitflyer") == 0) {
                 bitflyer_msg(db, line_timestamp, doc);
-            } else {
-                std::cerr << "unknown exchange name" << std::endl;
-                exit(1);
             }
         } else if (buf[0] == 'e' && buf[1] == 'm' && buf[2] == 'i' && buf[3] == 't') {
             std::cin.getline(buf, N_L, ',');
@@ -102,14 +108,11 @@ int main(int argc, char *argv[]) {
             doc.Parse<kParseFullPrecisionFlag>(buf);
             
             if (strcmp(argv[2], "bitfinex") == 0) {
-
+                bitfinex_emit(db, line_timestamp, doc);
             } else if (strcmp(argv[2], "bitmex") == 0) {
-
+                
             } else if (strcmp(argv[2], "bitflyer") == 0) {
                 bitflyer_emit(db, line_timestamp, doc);
-            } else {
-                std::cerr << "unknown exchange name" << std::endl;
-                exit(1);
             }
         } else {
             std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
@@ -118,35 +121,17 @@ int main(int argc, char *argv[]) {
         // expect a next line
         num_line++;
 
-        if (num_line % 100000 == 0) {
+        if (num_line % commit_interval == 0) {
             // commit before and start a new transaction
-            r = sqlite3_exec(db, "COMMIT", NULL, NULL, &err);
-
-            if (r != SQLITE_OK) {
-                std::cerr << "commit failed: " << err << std::endl;
-                sqlite3_free(err);
-                exit(1);
-            }
+            commit(db);
 
             // start a new transaction
-            r = sqlite3_exec(db, "BEGIN TRANSACTION", NULL, NULL, &err);
-
-            if (r != SQLITE_OK) {
-                std::cerr << "starting new transaction failed: " << err << std::endl;
-                sqlite3_free(err);
-                exit(1);
-            }
+            start_transaction(db);
         }
     }
 
     // commit all
-    r = sqlite3_exec(db, "COMMIT", NULL, NULL, &err);
-
-    if (r != SQLITE_OK) {
-        std::cerr << "commit failed: " << err << std::endl;
-        sqlite3_free(err);
-        exit(1);
-    }
+    commit(db);
 
     sqlite3_close_v2(db);
 

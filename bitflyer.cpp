@@ -5,7 +5,7 @@
 #include <set>
 
 #include "bitflyer.h"
-#include "./common.h"
+#include "common.h"
 
 using namespace rapidjson;
 
@@ -30,8 +30,6 @@ inline void bitflyer_executions(sqlite3 *db,
     rapidjson::GenericArray<false, rapidjson::Value::ValueType> &array) {
 
     // process messages
-    int r;
-    char *err = NULL;
     char *sql = (char *) malloc(sizeof(char)*N_SQL);
 
     const char *sideUpper;
@@ -69,13 +67,7 @@ inline void bitflyer_executions(sqlite3 *db,
         // construct sql
         snprintf(sql, N_SQL, "INSERT INTO '%s' VALUES(%llu, %.10f, %.10f)", channel, time, price, size);
 
-        r = sqlite3_exec(db, sql, NULL, NULL, &err);
-
-        if (r != SQLITE_OK) {
-            std::cerr << "sqlite error: " << err << std::endl;
-            sqlite3_free(err);
-            exit(1);
-        }
+        execute_insert(db, sql);
     }
 
     free(sql);
@@ -88,8 +80,6 @@ inline void bitflyer_board_side(sqlite3 *db,
     rapidjson::GenericArray<false, rapidjson::Value::ValueType> &array,
     const int side) {
 
-    int r;
-    char *err;
     char *sql = (char*) malloc(sizeof(char)*N_SQL);
 
     for (auto i = array.begin(); i != array.end(); i++) {
@@ -104,13 +94,7 @@ inline void bitflyer_board_side(sqlite3 *db,
 
         snprintf(sql, N_SQL, "INSERT INTO '%s' VALUES(%llu, %.10f, %.10f)", table_name, line_timestamp, price, size);
 
-        r = sqlite3_exec(db, sql, NULL, NULL, &err);
-
-        if (r != SQLITE_OK) {
-            std::cerr << "sqlite error: " << err << std::endl;
-            sqlite3_free(err);
-            exit(1);
-        }
+        execute_insert(db, sql);
     }
 
     free(sql);
@@ -166,8 +150,6 @@ inline void bitflyer_ticker(sqlite3 *db,
     double volume = obj["volume"].GetDouble();
     double volume_by_product = obj["volume_by_product"].GetDouble();
 
-    int r;
-    char *err = NULL;
     char *sql = (char *) malloc(sizeof(char)*N_SQL);
 
     snprintf(sql, N_SQL,
@@ -184,69 +166,33 @@ inline void bitflyer_ticker(sqlite3 *db,
         volume,
         volume_by_product);
 
-    r = sqlite3_exec(db, sql, NULL, NULL, &err);
-
-    if (r != SQLITE_OK) {
-        std::cerr << "sqlite error: " << err << std::endl;
-        sqlite3_free(err);
-        exit(1);
-    }
+    execute_insert(db, sql);
 
     free(sql);
 }
 
 void bitflyer_emit(sqlite3 *db, unsigned long long line_timestamp, Document &doc) {
     const char *channel = doc["params"]["channel"].GetString();
-    const char *table_definition;
+    TableType tt;
 
     if (strncmp(channel, "lightning_executions_", strlen("lightning_executions_")) == 0) {
-        table_definition =
-            "'timestamp' INTEGER NOT NULL,"
-            "'price' REAL NOT NULL,"
-            "'size' REAL NOT NULL";
+        tt = Trade;
             
     } else if (strncmp(channel, "lightning_board_snapshot_", strlen("lightning_board_snapshot_")) == 0) {
         return; // do nothing
 
     } else if (strncmp(channel, "lightning_board_", strlen("lightning_board_")) == 0) {
-        table_definition =
-            "'timestamp' INTEGER NOT NULL,"
-            "'price' REAL NOT NULL,"
-            "'size' REAL NOT NULL";
+        tt = Book;
 
     } else if (strncmp(channel, "lightning_ticker_", strlen("lightning_ticker_")) == 0) {
-        table_definition =
-            "'timestamp' INTEGER NOT NULL,"
-            "'best_bid' REAL NOT NULL,"
-            "'best_bid_size' REAL NOT NULL,"
-            "'total_bid_depth' REAL NOT NULL,"
-            "'best_ask' REAL NOT NULL,"
-            "'best_ask_size' REAL NOT NULL,"
-            "'total_ask_depth' REAL NOT NULL,"
-            "'last_traded_price' REAL NOT NULL,"
-            "'volume' REAL NOT NULL,"
-            "'volume_by_product' REAL NOT NULL";
+        tt = Ticker;
 
     } else {
         std::cerr << "unknown channel prefix: " << channel << std::endl;
         exit(1);
     }
 
-    int r;
-    char *err;
-    char *sql = (char *) malloc(sizeof(char)*N_SQL);
-    
-    snprintf(sql, N_SQL, "CREATE TABLE IF NOT EXISTS '%s' (%s)", channel, table_definition);
-
-    r = sqlite3_exec(db, sql, NULL, NULL, &err);
-
-    if (r != SQLITE_OK) {
-        std::cout << "sqlite error: " << err << std::endl;
-        sqlite3_free(err);
-        exit(1);
-    }
-
-    free(sql);
+    create_new_table(db, tt, channel);
 }
 
 void bitflyer_msg(sqlite3 *db, unsigned long long line_timestamp, Document &doc) {
