@@ -10,7 +10,6 @@ void bitmex_trade(sqlite3 *db, unsigned long long line_timestamp, rapidjson::Doc
 
     auto data = doc["data"].GetArray();
 
-
     if (strcmp(action, "partial") == 0) {
         char *table_name = (char *) malloc(sizeof(char)*N_PAIR);
         
@@ -41,7 +40,7 @@ void bitmex_trade(sqlite3 *db, unsigned long long line_timestamp, rapidjson::Doc
                 size = -size;
             }
 
-            snprintf(sql, N_SQL, "INSERT INTO 'trade_%s' VALUES (%llu, %.10f, %lu)", symbol, line_timestamp, price, size);
+            snprintf(sql, N_SQL, "INSERT INTO 'trade_%s' VALUES (%llu, %.10f, %ld)", symbol, line_timestamp, price, size);
 
             execute_insert(db, sql);
         }
@@ -57,16 +56,16 @@ struct Order {
     const char *symbol;
     unsigned long id;
 
-    bool operator==(const Order &o) {
+    bool operator==(const Order &o) const {
         return strcmp(symbol, o.symbol) == 0 && id == o.id;
     }
-    bool operator<(const Order &o) {
+    bool operator<(const Order &o) const {
         int cmp = strcmp(symbol, o.symbol);
-        return cmp || (cmp == 0 && id < o.id); 
+        return cmp < 0 || (cmp == 0 && id < o.id); 
     }
 };
 
-std::map<struct Order*, double> ob_id_order;
+std::map<Order, double> ob_id_order;
 
 void bitmex_orderbook(sqlite3 *db, unsigned long long line_timestamp, rapidjson::Document &doc) {
     const char *action = doc["action"].GetString();
@@ -74,100 +73,73 @@ void bitmex_orderbook(sqlite3 *db, unsigned long long line_timestamp, rapidjson:
     auto data = doc["data"].GetArray();
 
     char *sql = (char *) malloc(sizeof(char)*N_SQL);
+    char *table_name = (char *) malloc(sizeof(char)*N_PAIR);
 
-    if (strcmp(action, "partial") == 0) {
-        // first full orderbook snapshot
-        char *table_name = (char *) malloc(sizeof(char)*N_PAIR);
+    for (auto i = data.begin(); i != data.end(); i++) {
+        const char *symbol = (*i)["symbol"].GetString();
+        unsigned long id = (*i)["id"].GetUint64();
+        const char *side = (*i)["side"].GetString();
 
-        for (auto i = data.begin(); i != data.end(); i++) {
-            const char *symbol = (*i)["symbol"].GetString();
-            double price = (*i)["price"].GetDouble();
-            int64_t size = (*i)["size"].GetUint64();
-
-            unsigned long id = (*i)["id"].GetUint64();
-            const char *side = (*i)["side"].GetString();
+        /* get and set price */
+        double price;
+        if (strcmp(action, "partial") == 0 || strcmp(action, "insert") == 0) {
+            price = (*i)["price"].GetDouble();
 
             // copy symbol for storing into a map
             char *symbol_cpy = (char *) malloc(sizeof(char)*N_PAIR);
             strcpy(symbol_cpy, symbol);
-
-            struct Order *order = (struct Order*) malloc(sizeof(struct Order));
+            
+            Order *order = (Order*) malloc(sizeof(Order));
             order->symbol = symbol_cpy;
             order->id = id;
 
             // set price to a map for tracking
-            ob_id_order[order] = price;
+            ob_id_order[*order] = price;
 
-            /* insert into a database */
+        } else if (strcmp(action, "update") == 0 || strcmp(action, "delete") == 0) {
+            // get price for symbol and id
+            Order order = Order{symbol, id};
+
+            price = ob_id_order[order];
+
+        } else {
+            std::cerr << "unknown action: " << action << std::endl;
+            free(sql);
+            exit(1);
+        }
+
+        // if price is 0 then something went wrong
+        if (price == 0) {
+            std::cerr << "price == 0" << std::endl;
+            exit(1);
+        }
+
+        /* set size */
+        int64_t size;
+        if (strcmp(action, "partial") == 0 || strcmp(action, "insert") == 0 || strcmp(action, "update") == 0) {
+            size = (*i)["size"].GetInt64();
+
             // if sell is 1 (true) then -size, 0 then size
             if (strcmp(side, "Sell") == 0) {
                 size = -size;
             }
+        } else if (strcmp(action, "delete") == 0) {
+            // size is zero
 
+            size = 0;
+        }
+
+        /* insert into a database */
+        snprintf(table_name, N_PAIR, "orderBookL2_%s", symbol);
+        
+        if (strcmp(action, "partial") == 0) {
             // create new table
-            snprintf(table_name, N_PAIR, "orderBookL2_%s", symbol);
             create_new_table(db, Book, table_name);
-
-            // insert
-            snprintf(sql, N_SQL, "INSERT INTO '%s' VALUES (%llu, %.10f, %lu)", table_name, line_timestamp, price, size);
-            execute_insert(db, sql);
         }
 
-        free(table_name);
-    } else if (strcmp(action, "update") == 0 || strcmp(action, "insert") == 0) {
-        for (auto i = data.begin(); i != data.end(); i++) {
-            const char *symbol = (*i)["symbol"].GetString();
-            int64_t size = (*i)["size"].GetUint64();
-
-            unsigned long id = (*i)["id"].GetUint64();
-            const char *side = (*i)["side"].GetString();
-
-            // copy symbol for getting price
-            char *symbol_cpy = (char *) malloc(sizeof(char)*N_PAIR);
-            strcpy(symbol_cpy, symbol);
-
-            // get price for symbol and id
-            struct Order order = Order{symbol_cpy, id};
-            double price = ob_id_order[&order];
-
-            free(symbol_cpy);
-
-            /* insert into a database */
-            if (strcmp(side, "Sell") == 0) {
-                size = -size;
-            }
-
-            // insert
-            snprintf(sql, N_SQL, "INSERT INTO 'orderBookL2_%s' VALUES (%llu, %.10f, %lu)", symbol, line_timestamp, price, size);
-            execute_insert(db, sql);
-        }
-    } else if (strcmp(action, "delete") == 0) {
-        for (auto i = data.begin(); i != data.end(); i++) {
-            const char *symbol = (*i)["symbol"].GetString();
-
-            unsigned long id = (*i)["id"].GetUint64();
-
-            // copy symbol for getting price
-            char *symbol_cpy = (char *) malloc(sizeof(char)*N_PAIR);
-            strcpy(symbol_cpy, symbol);
-
-            // get price for symbol and id
-            struct Order order = Order{symbol_cpy, id};
-            double price = ob_id_order[&order];
-            // deleted, erase from map
-            ob_id_order.erase(&order);
-
-            free(symbol_cpy);
-
-            /* insert into a database */
-            // insert
-            snprintf(sql, N_SQL, "INSERT INTO 'orderBookL2_%s' VALUES (%llu, %.10f, 0)", symbol, line_timestamp, price);
-            execute_insert(db, sql);
-        }
-    } else {
-        std::cerr << "unknown action: " << action << std::endl;
-        free(sql);
-        exit(1);
+        // insert
+        snprintf(sql, N_SQL, "INSERT INTO '%s' VALUES (%llu, %.10f, %ld)", table_name, line_timestamp, price, size);
+        execute_insert(db, sql);
     }
 
     free(sql);
