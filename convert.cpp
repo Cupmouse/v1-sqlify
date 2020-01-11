@@ -6,6 +6,7 @@
 #include "common.h"
 #include "bitflyer.h"
 #include "bitfinex.h"
+#include "bitmex.h"
 
 using namespace rapidjson;
 
@@ -88,7 +89,6 @@ int main(int argc, char *argv[]) {
 
             // rest of the line is a msg
             std::cin.getline(buf, N_L);
-            // std::cout << buf << std::endl;
             // setting kParseFullPrecisionFlag to obitain price and size in full precision
             doc.Parse<kParseFullPrecisionFlag>(buf);
 
@@ -96,6 +96,7 @@ int main(int argc, char *argv[]) {
                 bitfinex_msg(db, line_timestamp, doc);
 
             } else if (strcmp(argv[2], "bitmex") == 0) {
+                bitmex_msg(db, line_timestamp, doc);
                 
             } else if (strcmp(argv[2], "bitflyer") == 0) {
                 bitflyer_msg(db, line_timestamp, doc);
@@ -109,7 +110,9 @@ int main(int argc, char *argv[]) {
             
             if (strcmp(argv[2], "bitfinex") == 0) {
                 bitfinex_emit(db, line_timestamp, doc);
+                
             } else if (strcmp(argv[2], "bitmex") == 0) {
+                bitmex_emit(db, line_timestamp, doc);
                 
             } else if (strcmp(argv[2], "bitflyer") == 0) {
                 bitflyer_emit(db, line_timestamp, doc);

@@ -7,7 +7,6 @@
 
 using namespace rapidjson;
 
-// stores websocket channel id vs channel name
 std::map<int, char *> chanIds;
 
 inline void bitfinex_book_single(sqlite3 *db,
@@ -24,7 +23,7 @@ inline void bitfinex_book_single(sqlite3 *db,
     char *sql = (char *) malloc(sizeof(char)*N_SQL);
 
     // construct a sql statement
-    snprintf(sql, N_SQL, "INSERT INTO %s VALUES(%llu, %.10f, %.10f)", channel, line_timestamp, price, amount);
+    snprintf(sql, N_SQL, "INSERT INTO '%s' VALUES(%llu, %.10f, %.10f)", channel, line_timestamp, price, amount);
 
     execute_insert(db, sql);
 
@@ -64,7 +63,7 @@ inline void bitfinex_trades(sqlite3 *db,
     char *sql = (char *) malloc(sizeof(char)*N_SQL);
 
     // construct a sql statement
-    snprintf(sql, N_SQL, "INSERT INTO %s VALUES(%llu, %.10f, %.10f)", channel, timestamp, price, amount);
+    snprintf(sql, N_SQL, "INSERT INTO '%s' VALUES(%llu, %.10f, %.10f)", channel, timestamp, price, amount);
 
     execute_insert(db, sql);
 

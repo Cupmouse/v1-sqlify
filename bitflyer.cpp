@@ -46,7 +46,9 @@ inline void bitflyer_executions(sqlite3 *db,
 
             // flip sign to be negative if the side is sell
             // stays the same if buy
-            size = size*(1-(sideUpper[0] == 'S')*2);
+            if (sideUpper[0] == 'S') {
+                size = -size;
+            }
 
             // optional check for side illegality
             if (sideUpper[0] != 'B' && sideUpper[0] != 'S') {
@@ -90,7 +92,9 @@ inline void bitflyer_board_side(sqlite3 *db,
 
         // flip sign to be negative if the side is sell
         // stays the same if buy
-        size = size*(1-side*2);
+        if (side) {
+            size = -size;
+        }
 
         snprintf(sql, N_SQL, "INSERT INTO '%s' VALUES(%llu, %.10f, %.10f)", table_name, line_timestamp, price, size);
 
